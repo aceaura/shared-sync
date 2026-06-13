@@ -1,0 +1,18 @@
+# 生产部署:直接拉取 CI 构建好的镜像,无需本地构建源码。
+# 一行安装见 server/install.sh 或 README「服务端一键部署」。
+services:
+  shared-sync-server:
+    image: ghcr.io/aceaura/shared-sync-server:latest
+    container_name: shared-sync-server
+    ports:
+      - "8418:80"
+    environment:
+      # 两者均非空时启用 HTTP Basic Auth;否则匿名读写(仅建议在可信局域网使用)
+      GIT_AUTH_USER: ${GIT_AUTH_USER:-}
+      GIT_AUTH_PASSWORD: ${GIT_AUTH_PASSWORD:-}
+    volumes:
+      - git-data:/srv/git
+    restart: unless-stopped
+
+volumes:
+  git-data:

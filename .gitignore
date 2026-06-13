@@ -1,0 +1,30 @@
+# Dart / Flutter
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock
+**/*.iml
+.idea/
+
+# 编译产物
+client/engine/build/
+client/app/build/
+installer/windows/Output/
+*.dmg
+*.exe
+!installer/**/*.iss
+
+# macOS
+.DS_Store
+
+# 客户端运行期目录(绝不入库)
+.sync/
+.sync-trash/
+
+# 临时
+/tmp/
+*.tmp
+*.log
+*.bak

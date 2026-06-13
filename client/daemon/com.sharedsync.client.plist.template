@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd LaunchAgent 模板 for shared-sync 客户端(无人值守保活)。
+  install-macos.sh 会把下列占位符替换成真实值后写入
+  ~/Library/LaunchAgents/<label>.plist:
+    __LABEL__   launchd Label,如 com.sharedsync.client.<slug>
+    __BIN__     sync_cli 可执行文件绝对路径
+    __DIR__     共享目录绝对路径
+    __LOG__     标准输出日志绝对路径
+    __ERRLOG__  标准错误日志绝对路径
+  请勿手工编辑生成后的 plist;改这里的模板再重新 install。
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>__LABEL__</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__BIN__</string>
+        <string>watch</string>
+        <string>--dir</string>
+        <string>__DIR__</string>
+    </array>
+
+    <!-- 登录后自动启动 -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- 进程退出(崩溃/被 kill)即重启,实现进程级保活 -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- 防崩溃风暴:两次拉起之间至少间隔 10 秒 -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- 纯后台任务:不抢占交互资源 -->
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>__LOG__</string>
+
+    <key>StandardErrorPath</key>
+    <string>__ERRLOG__</string>
+</dict>
+</plist>

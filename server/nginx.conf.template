@@ -1,0 +1,43 @@
+# shared-sync git smart HTTP 服务
+# 由 entrypoint.sh 用 envsubst 渲染:只替换 AUTH_DIRECTIVES 变量(location 块内),
+# 其余 $ 变量(如 $uri)原样保留为 nginx 变量。
+# 注意:此注释中不能出现该变量的 ${...} 字面量,否则也会被 envsubst 替换。
+user nginx;
+worker_processes 1;
+pid /run/nginx.pid;
+error_log /dev/stderr warn;
+
+events {
+    worker_connections 256;
+}
+
+http {
+    access_log /dev/stdout;
+    sendfile on;
+
+    server {
+        listen 80 default_server;
+        server_name _;
+
+        # push 的 pack 可能很大,不限制请求体
+        client_max_body_size 0;
+
+        location ~ ^/[^/]+\.git(/.*)?$ {
+            ${AUTH_DIRECTIVES}
+
+            include /etc/nginx/fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME /usr/libexec/git-core/git-http-backend;
+            fastcgi_param GIT_PROJECT_ROOT /srv/git;
+            fastcgi_param GIT_HTTP_EXPORT_ALL "";
+            fastcgi_param PATH_INFO $uri;
+            fastcgi_param REMOTE_USER $remote_user;
+            # clone/push 大仓库时后端耗时较长
+            fastcgi_read_timeout 600s;
+            fastcgi_pass unix:/run/fcgiwrap.socket;
+        }
+
+        location / {
+            return 404;
+        }
+    }
+}

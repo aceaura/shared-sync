@@ -1,0 +1,47 @@
+#!/bin/sh
+# shared-sync pre-receive 钩子:
+#   1) 存在 maintenance.lock(维护窗口)→ 拒绝全部 push;
+#   2) 只允许更新 refs/heads/current;
+#   3) 拒绝删除引用;
+#   4) 每次 push 尝试(时间、ref、old→new)append 到 server.log。
+# 非快进由仓库配置 receive.denyNonFastForwards 拒绝(发生在本钩子之后)。
+# POSIX sh:兼容容器内 busybox ash 与 e2e --local 模式的宿主机 /bin/sh。
+set -eu
+
+# 钩子的工作目录是 bare 仓库本身;锁与日志位于仓库的父目录。
+# 容器内即 /srv/git(契约路径);--local 模式下为本地 bare 仓库的父目录。
+repo_parent=$(dirname "$PWD")
+if [ -d /srv/git ]; then
+    log_file=/srv/git/server.log
+else
+    log_file="$repo_parent/server.log"
+fi
+
+log() {
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [pre-receive] $*" >> "$log_file" 2>/dev/null || true
+}
+
+if [ -e /srv/git/maintenance.lock ] || [ -e "$repo_parent/maintenance.lock" ]; then
+    echo "shared-sync: server maintenance in progress, push rejected; retry later" >&2
+    log "REJECT all: maintenance.lock present"
+    exit 1
+fi
+
+zero=0000000000000000000000000000000000000000
+status=0
+while read -r old new ref; do
+    if [ "$ref" != "refs/heads/current" ]; then
+        echo "shared-sync: only refs/heads/current may be pushed (got $ref)" >&2
+        log "REJECT $ref $old -> $new: ref not allowed"
+        status=1
+        continue
+    fi
+    if [ "$new" = "$zero" ]; then
+        echo "shared-sync: deleting refs/heads/current is not allowed" >&2
+        log "REJECT $ref delete ($old -> $new)"
+        status=1
+        continue
+    fi
+    log "PUSH $ref $old -> $new"
+done
+exit $status
