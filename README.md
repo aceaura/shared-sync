@@ -57,6 +57,10 @@ docker compose up -d --build
 # 可选认证: 在 docker-compose.yml 里设置 GIT_AUTH_USER / GIT_AUTH_PASSWORD
 ```
 
+> 通讯协议是 Git Smart HTTP(普通 HTTP),可放在 nginx 等反向代理后做 HTTPS、域名或
+> 按路径分流子路径部署(如 `https://example.com/sync/shared.git`)。示例配置见
+> [server/examples/](server/examples/README.md)。
+
 ### 2. 客户端(每台 PC)
 
 前置:系统安装 `git`(>= 2.30);桌面应用或 CLI 二选一。
