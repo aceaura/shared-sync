@@ -1,0 +1,90 @@
+# =============================================================================
+# Nebula 配置 —— lighthouse 节点(公网 VPS / 跳板)
+# overlay IP: 10.77.0.1   网段: 10.77.0.0/24
+#
+# 角色:
+#   1) rendezvous / 打洞协调点(am_lighthouse=true)
+#      —— 收集各节点上报的公网映射,帮两端交换地址以做 UDP 打洞,牵线不转发数据。
+#   2) relay / 中继兜底(am_relay=true)
+#      —— 当两端打洞失败(对称 NAT / CGNAT)时,作为中继转发【加密包】。
+#         lighthouse 读不到 git 明文(端到端密钥不在 lighthouse)。
+#
+# 该节点必须有公网可达地址,并放行 UDP 4242(见末尾说明)。
+# =============================================================================
+
+pki:
+  # 证书与私钥由 gen-certs.sh 生成,部署时放到容器/主机的 /etc/nebula/ 下。
+  ca: /etc/nebula/ca.crt
+  cert: /etc/nebula/lighthouse.crt
+  key: /etc/nebula/lighthouse.key
+
+# lighthouse 自身是被发现者,static_host_map 通常留空。
+static_host_map: {}
+
+lighthouse:
+  # 本节点就是 lighthouse(打洞协调点)。
+  am_lighthouse: true
+  # 不做 overlay 内 DNS(本项目用固定 IP,无需)。
+  serve_dns: false
+  # lighthouse 自己不需要再向别的 lighthouse 上报,hosts 留空。
+  hosts: []
+  # 上报间隔(秒);lighthouse 端用默认即可。
+  interval: 60
+
+listen:
+  # 监听所有地址(IPv4+IPv6),UDP 4242。
+  host: "0.0.0.0"
+  port: 4242
+
+# 打洞:lighthouse 也开启,协助 NAT 保活与反向打洞。
+punchy:
+  punch: true
+  respond: true
+
+# -----------------------------------------------------------------------------
+# 中继兜底:本节点【作为】relay 为其它节点转发流量。
+#   am_relay=true     —— 允许本节点充当中继。
+#   use_relays=false  —— lighthouse 自己不需要经别人中继。
+# -----------------------------------------------------------------------------
+relay:
+  am_relay: true
+  use_relays: false
+  relays: []
+
+tun:
+  disabled: false
+  dev: nebula1
+  drop_local_broadcast: false
+  drop_multicast: false
+  tx_queue: 500
+  mtu: 1300
+
+logging:
+  level: info
+  format: text
+
+# -----------------------------------------------------------------------------
+# 防火墙(overlay 内,作用于 nebula tun 上的流量,非主机物理网卡)。
+#   默认 inbound/outbound = drop,显式放行所需。
+#   lighthouse 本身不跑 shared-sync,但放行 icmp 便于健康探测/连通性诊断。
+# -----------------------------------------------------------------------------
+firewall:
+  outbound_action: drop
+  inbound_action: drop
+
+  conntrack:
+    tcp_timeout: 12m
+    udp_timeout: 3m
+    default_timeout: 10m
+
+  outbound:
+    # overlay 内出站全放行(本端主动发起的连接)。
+    - port: any
+      proto: any
+      host: any
+
+  inbound:
+    # 健康探测 / 连通性诊断:放行 overlay 内 ICMP。
+    - port: any
+      proto: icmp
+      host: any

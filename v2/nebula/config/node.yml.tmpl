@@ -1,0 +1,104 @@
+# =============================================================================
+# Nebula 配置模板 —— 普通节点(node-home / node-company 等 NAT 后的私网)
+#
+# 这是【模板】,connd / 部署脚本在渲染时替换以下占位符:
+#   __NODE_CERT__       节点证书文件名,如 node-home.crt
+#   __NODE_KEY__        节点私钥文件名,如 node-home.key
+#   __LIGHTHOUSE_IP__   lighthouse 的【公网】地址,如 203.0.113.10
+#                       (注意:不是 overlay IP,是 VPS 的真实公网 IP/域名)
+#
+# overlay IP 由证书内的 -networks 决定(node-home=10.77.0.2 / node-company=10.77.0.3),
+# 主备两条路径共用同一 overlay IP,路径切换对上层(shared-sync 引擎)透明。
+# =============================================================================
+
+pki:
+  ca: /etc/nebula/ca.crt
+  cert: /etc/nebula/__NODE_CERT__
+  key: /etc/nebula/__NODE_KEY__
+
+# -----------------------------------------------------------------------------
+# static_host_map:把 lighthouse 的 overlay IP(10.77.0.1)映射到它的公网 endpoint。
+#   这是节点能首次找到 lighthouse 的唯一静态信息;其余 peer 地址都靠 lighthouse 发现。
+#   左边是 overlay IP(字符串),右边是 "公网IP:UDP端口" 列表。
+# -----------------------------------------------------------------------------
+static_host_map:
+  "10.77.0.1": ["__LIGHTHOUSE_IP__:4242"]
+
+lighthouse:
+  am_lighthouse: false
+  serve_dns: false
+  # 指向 lighthouse 的 overlay IP(打洞协调点)。
+  hosts:
+    - "10.77.0.1"
+  interval: 60
+
+listen:
+  # 普通节点监听本地任意地址 + UDP 4242(NAT 会改写源端口,无妨)。
+  host: "0.0.0.0"
+  port: 4242
+
+# -----------------------------------------------------------------------------
+# punchy —— 主动打洞(主路径 / 直连优先)
+#   punch=true   主动向 peer 发 UDP 打洞包,在 NAT 上打出映射,争取建立直连 P2P。
+#   respond=true 收到对端打洞探测时回应,提升双向打洞成功率(尤其一端是受限锥形 NAT)。
+#   对应设计 §2.2:先有连接,再后台升级到直连;punch 让直连尽快建立。
+# -----------------------------------------------------------------------------
+punchy:
+  punch: true
+  respond: true
+  delay: 1s
+  respond_delay: 5s
+
+# -----------------------------------------------------------------------------
+# relay —— 中继兜底(备用路径)
+#   use_relays=true  允许本节点在【打不通直连】时,经 relay 转发流量给对端。
+#   relays           可用作中继的节点(overlay IP)列表,这里指向 lighthouse(它 am_relay=true)。
+#   行为天然符合设计 §2.2:打洞失败 / 未建立前,流量先走 relay 保证立刻可达;
+#   一旦直连打通,Nebula 自动优先走直连(低延迟),relay 仅作兜底。
+# -----------------------------------------------------------------------------
+relay:
+  am_relay: false
+  use_relays: true
+  relays:
+    - "10.77.0.1"
+
+tun:
+  disabled: false
+  dev: nebula1
+  drop_local_broadcast: false
+  drop_multicast: false
+  tx_queue: 500
+  mtu: 1300
+
+logging:
+  level: info
+  format: text
+
+# -----------------------------------------------------------------------------
+# 防火墙(overlay 内流量)。默认 drop,显式放行:
+#   * ICMP   —— connd 健康探测 / 连通性诊断(心跳、RTT)。
+#   * tcp 8418 —— shared-sync 同步服务端口(server_url=http://<overlay-ip>:8418)。
+# -----------------------------------------------------------------------------
+firewall:
+  outbound_action: drop
+  inbound_action: drop
+
+  conntrack:
+    tcp_timeout: 12m
+    udp_timeout: 3m
+    default_timeout: 10m
+
+  outbound:
+    - port: any
+      proto: any
+      host: any
+
+  inbound:
+    # 健康探测 / 连通性诊断。
+    - port: any
+      proto: icmp
+      host: any
+    # shared-sync 同步端口,仅放行 overlay 内的节点(host: any 即 overlay 内任意 peer)。
+    - port: 8418
+      proto: tcp
+      host: any

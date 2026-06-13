@@ -1,0 +1,9 @@
+# =============================================================================
+# Dockerfile.router — 模拟家庭/公司出口路由器(NAT 网关)
+# alpine + iptables/iproute2,跑 router-entrypoint.sh 做 ip_forward + MASQUERADE。
+# =============================================================================
+FROM alpine:3.20
+RUN apk add --no-cache bash iproute2 iptables
+COPY router-entrypoint.sh /usr/local/bin/router-entrypoint.sh
+RUN chmod +x /usr/local/bin/router-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/router-entrypoint.sh"]

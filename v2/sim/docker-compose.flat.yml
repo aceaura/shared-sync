@@ -1,0 +1,74 @@
+# =============================================================================
+# docker-compose.flat.yml — 第一步:平面拓扑(证明 Nebula 链路本身通)
+#
+# 3 个 nebula 容器在同一 docker 网络,无 NAT、无路由限制。lighthouse 的
+# "公网 endpoint" 就是它在该网络里的固定 IP 10.99.0.1。home/company 直接可达
+# lighthouse,打洞天然成功 —— 这步只为排除证书/配置错误。
+#
+# 运行 nebula 需要 TUN 设备与 NET_ADMIN:
+#   cap_add: NET_ADMIN + devices: /dev/net/tun。
+# =============================================================================
+
+networks:
+  flat:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.99.0.0/24
+
+services:
+  lighthouse:
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+    image: sharedsync-sim-node
+    container_name: sim-flat-lighthouse
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    networks:
+      flat:
+        ipv4_address: 10.99.0.10   # 避开 .1(docker 网桥网关默认占用)
+    environment:
+      ROLE: lighthouse
+      NEBULA_CONFIG: /etc/nebula-cfg/lighthouse.yml
+    volumes:
+      - ../nebula/certs:/etc/nebula:ro
+      - ../nebula/config/lighthouse.yml:/etc/nebula-cfg/lighthouse.yml:ro
+
+  home:
+    image: sharedsync-sim-node
+    container_name: sim-flat-home
+    depends_on: [lighthouse]
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    networks:
+      flat:
+        ipv4_address: 10.99.0.2
+    environment:
+      ROLE: node
+      NEBULA_CONFIG: /etc/nebula-cfg/node.yml.tmpl
+      LIGHTHOUSE_PUB_IP: "10.99.0.10"   # 平面拓扑:lighthouse 的 docker IP 当"公网"
+      NODE_CERT: node-home.crt
+      NODE_KEY: node-home.key
+    volumes:
+      - ../nebula/certs:/etc/nebula:ro
+      - ../nebula/config/node.yml.tmpl:/etc/nebula-cfg/node.yml.tmpl:ro
+
+  company:
+    image: sharedsync-sim-node
+    container_name: sim-flat-company
+    depends_on: [lighthouse]
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    networks:
+      flat:
+        ipv4_address: 10.99.0.3
+    environment:
+      ROLE: node
+      NEBULA_CONFIG: /etc/nebula-cfg/node.yml.tmpl
+      LIGHTHOUSE_PUB_IP: "10.99.0.10"
+      NODE_CERT: node-company.crt
+      NODE_KEY: node-company.key
+    volumes:
+      - ../nebula/certs:/etc/nebula:ro
+      - ../nebula/config/node.yml.tmpl:/etc/nebula-cfg/node.yml.tmpl:ro

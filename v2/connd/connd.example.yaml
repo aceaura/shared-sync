@@ -1,0 +1,27 @@
+# connd 示例配置(shared-sync v2)。
+# 时长字段用 Go duration 字符串(如 "25s"、"1m")。未列出的字段取内置默认。
+
+# 对端 overlay 虚拟 IP(被探测对象)。两端共用同一 overlay 网段。
+peerOverlayIP: 10.77.0.3
+
+# relay 的 underlay/公网 IP(Phase1 用于判定路径是否经中继;Phase0 暂未使用)。
+relayUnderlayIP: 203.0.113.10
+
+# overlay 内探测端口(占位;真实可换 ICMP)。
+probePort: "4242"
+
+# 本地状态 HTTP 端点监听地址。仅绑回环。
+statusAddr: 127.0.0.1:4243
+
+# 状态机参数(DESIGN_v2.md §4)。
+tUp: 25s        # 升级滞后窗口:直连连续健康 >= T_up 才从 FALLBACK 升级 DIRECT(防抖)
+n: 3            # 降级阈值:DIRECT 下直连连续失败 N 次立即降级 FALLBACK
+p: 45s          # 打洞重试周期:FALLBACK 下每 P 秒触发一次后台打洞重试
+heartbeat: 7s   # 心跳/探测间隔
+probeTimeout: 2s  # 单次探测超时
+
+# 受管的 nebula 子进程。
+nebula:
+  binPath: nebula                 # nebula 二进制(默认从 PATH 查找)
+  configPath: /etc/nebula/node.yml  # 传给 nebula 的 -config
+  dryRun: false                   # true 则不真正 exec(无 nebula 环境/CI 跑通链路用)

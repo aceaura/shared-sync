@@ -28,3 +28,9 @@ installer/windows/Output/
 *.tmp
 *.log
 *.bak
+
+# v2 Nebula 生成的证书/私钥(绝不入库,用 gen-certs.sh 重建)
+v2/nebula/certs/
+# Go 编译产物
+v2/connd/connd
+v2/connd/bin/

@@ -1,0 +1,171 @@
+# =============================================================================
+# docker-compose.nat.yml — 第二/三步:双 NAT 拓扑(核心)
+#
+# 拓扑(三张互不直连的 docker 网络):
+#
+#            ┌──────────────── public 10.88.0.0/24 ────────────────┐
+#            │  lighthouse 10.88.0.10  (rendezvous + relay)         │
+#            │        ▲                         ▲                   │
+#            │  router-home 10.88.0.2     router-company 10.88.0.3  │
+#            └────────┼─────────────────────────┼───────────────────┘
+#         (MASQUERADE)│                          │(MASQUERADE)
+#     priv-home 10.66.0.0/24             priv-company 10.55.0.0/24
+#            │                                   │
+#     home 10.66.0.2                      company 10.55.0.2
+#     (默认路由 -> 10.66.0.1)             (默认路由 -> 10.55.0.1)
+#     overlay 10.77.0.2                   overlay 10.77.0.3
+#
+# priv-home 与 priv-company 之间【无任何直连路由】,两端只能各自经自己的 router
+# NAT 到 public 段,在 lighthouse 处相遇 -> 打洞 / relay。这就是"双 NAT"。
+#
+# 第三步阻断:给 router 传 BLOCK_DIRECT=1(用 .block.env 覆盖)即丢弃两 router
+# public IP 之间的 UDP,逼流量走 relay;run.sh 通过重启 router 服务切换。
+# =============================================================================
+
+networks:
+  public:
+    driver: bridge
+    ipam:
+      config: [{ subnet: 10.88.0.0/24 }]
+  # 注意:刻意【不】用 internal: true。Docker 的 internal 会在宿主 iptables 装
+  # DOCKER-INTERNAL 规则,把"源/目的不在本子网"的转发包一律 DROP —— 这会连
+  # router 经 NAT 出公网的【返程】一起掐断,NAT 根本不通。
+  # 双 private 段之间的隔离这里靠"拓扑 + 路由"实现:home/company 各自只接在自己的
+  # private 网,默认路由指向各自 router;两 private 网桥之间没有任何 L3 路由,
+  # 只能各自 MASQUERADE 到 public 段在 lighthouse 处相遇 —— 这正是双 NAT 的本意。
+  priv-home:
+    driver: bridge
+    # 关键:关掉 docker 对该网桥的自动 MASQUERADE。否则 docker 会装一条
+    #   -A POSTROUTING -s 10.66.0.0/24 ! -o <bridge> -j MASQUERADE
+    # 把"从私网经 router 转发出去 / DNAT 进来的对端包"源地址改写成网桥地址,
+    # 导致节点把对端误认成自己的网关(如 10.66.0.254),回包发错方向 -> tunnel dead。
+    # 关掉后源 IP 一路保留到 router,由 router 自己的 MASQUERADE 统一改写(单层 NAT)。
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+    ipam:
+      # gateway 显式放到 .254,让出 .1 给 router 容器(否则与 docker 网桥网关冲突)。
+      config: [{ subnet: 10.66.0.0/24, gateway: 10.66.0.254 }]
+  priv-company:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+    ipam:
+      config: [{ subnet: 10.55.0.0/24, gateway: 10.55.0.254 }]
+
+services:
+  # ---- 公网跳板 ----
+  lighthouse:
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+    image: sharedsync-sim-node
+    container_name: sim-nat-lighthouse
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    networks:
+      public:
+        ipv4_address: 10.88.0.10
+    environment:
+      ROLE: lighthouse
+      NEBULA_CONFIG: /etc/nebula-cfg/lighthouse.yml
+    volumes:
+      - ../nebula/certs:/etc/nebula:ro
+      - ../nebula/config/lighthouse.yml:/etc/nebula-cfg/lighthouse.yml:ro
+
+  # ---- 家庭出口路由器(NAT) ----
+  router-home:
+    build:
+      context: .
+      dockerfile: Dockerfile.router
+    image: sharedsync-sim-router
+    container_name: sim-nat-router-home
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: 1
+    networks:
+      public:
+        ipv4_address: 10.88.0.2
+      priv-home:
+        ipv4_address: 10.66.0.1
+    environment:
+      PUBLIC_SUBNET: "10.88.0."
+      PUBLIC_IP: "10.88.0.2"            # 本 router 的 public IP(端口保持 SNAT 用)
+      LIGHTHOUSE_PUB_IP: "10.88.0.10"
+      PEER_ROUTER_PUB_IP: "10.88.0.3"   # router-company 的 public IP
+      NODE_PRIV_IP: "10.66.0.2"         # home 节点私网 IP(full-cone DNAT 目标)
+      BLOCK_DIRECT: "${BLOCK_DIRECT:-0}"
+
+  # ---- 公司出口路由器(NAT) ----
+  router-company:
+    image: sharedsync-sim-router
+    container_name: sim-nat-router-company
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: 1
+    networks:
+      public:
+        ipv4_address: 10.88.0.3
+      priv-company:
+        ipv4_address: 10.55.0.1
+    environment:
+      PUBLIC_SUBNET: "10.88.0."
+      PUBLIC_IP: "10.88.0.3"            # 本 router 的 public IP(端口保持 SNAT 用)
+      LIGHTHOUSE_PUB_IP: "10.88.0.10"
+      PEER_ROUTER_PUB_IP: "10.88.0.2"   # router-home 的 public IP
+      NODE_PRIV_IP: "10.55.0.2"         # company 节点私网 IP(full-cone DNAT 目标)
+      BLOCK_DIRECT: "${BLOCK_DIRECT:-0}"
+
+  # ---- 家用 PC(NAT 后,overlay 10.77.0.2) ----
+  home:
+    image: sharedsync-sim-node
+    container_name: sim-nat-home
+    depends_on: [lighthouse, router-home]
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    networks:
+      priv-home:
+        ipv4_address: 10.66.0.2
+    environment:
+      ROLE: node
+      NEBULA_CONFIG: /etc/nebula-cfg/node.yml.tmpl
+      LIGHTHOUSE_PUB_IP: "10.88.0.10"   # lighthouse 的"公网"IP
+      NODE_CERT: node-home.crt
+      NODE_KEY: node-home.key
+      ROUTER_IP: "10.66.0.1"            # 默认路由走 router-home -> 模拟 NAT 出网
+      REDIRECT_8418: "1"                # overlay :8418 -> 本机 :80(shared-sync 服务端)
+    volumes:
+      - ../nebula/certs:/etc/nebula:ro
+      - ../nebula/config/node.yml.tmpl:/etc/nebula-cfg/node.yml.tmpl:ro
+
+  # ---- shared-sync 服务端:与 home 节点共享网络命名空间 ----
+  # 监听 0.0.0.0:80;home 节点 PREROUTING 把 overlay :8418 重定向到 :80。
+  # 于是对端用 http://10.77.0.2:8418/shared.git 访问,流量跑在 overlay 上。
+  sharedsync-server:
+    image: ghcr.io/aceaura/shared-sync-server:1.0.0
+    container_name: sim-nat-sharedsync-server
+    depends_on: [home]
+    network_mode: "service:home"   # 复用 home 的 netns(含 nebula tun)
+    environment:
+      GIT_AUTH_USER: ""
+      GIT_AUTH_PASSWORD: ""
+
+  # ---- 公司 PC(NAT 后,overlay 10.77.0.3) ----
+  company:
+    image: sharedsync-sim-node
+    container_name: sim-nat-company
+    depends_on: [lighthouse, router-company]
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    networks:
+      priv-company:
+        ipv4_address: 10.55.0.2
+    environment:
+      ROLE: node
+      NEBULA_CONFIG: /etc/nebula-cfg/node.yml.tmpl
+      LIGHTHOUSE_PUB_IP: "10.88.0.10"
+      NODE_CERT: node-company.crt
+      NODE_KEY: node-company.key
+      ROUTER_IP: "10.55.0.1"            # 默认路由走 router-company
+    volumes:
+      - ../nebula/certs:/etc/nebula:ro
+      - ../nebula/config/node.yml.tmpl:/etc/nebula-cfg/node.yml.tmpl:ro

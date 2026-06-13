@@ -1,0 +1,19 @@
+# =============================================================================
+# Dockerfile.node — nebula 节点容器(lighthouse / home / company 复用同一镜像)
+#
+# nebulaoss/nebula 是 distroless(无 shell),无法在其中跑编排脚本与诊断工具,
+# 故以 alpine 为基,把官方镜像里的 /nebula 二进制 COPY 进来,再装上:
+#   bash       —— 运行 node-entrypoint.sh
+#   iproute2   —— ip route(改默认路由走 router)
+#   iptables   —— overlay :8418->:80 重定向(home 节点)
+#   iputils    —— ping(overlay 连通性验证)
+#   curl,git   —— 端到端验证(company 节点经 overlay clone/push)
+# =============================================================================
+FROM nebulaoss/nebula:latest AS nebula
+
+FROM alpine:3.20
+RUN apk add --no-cache bash iproute2 iptables iputils curl git
+COPY --from=nebula /nebula /usr/local/bin/nebula
+COPY node-entrypoint.sh /usr/local/bin/node-entrypoint.sh
+RUN chmod +x /usr/local/bin/node-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/node-entrypoint.sh"]
