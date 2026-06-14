@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  com.shared-sync.frpc.plist —— 客户端 frpc visitor(launchd 系统级守护进程)
+
+  由 v2/install/install-client.sh 渲染 __FRPC_BIN__ / __FRPC_CONFIG__ / __LOG_DIR__。
+  作为 sidecar 常驻;本地暴露 connd 的 t2BackendAddr(撑 T2)。
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.shared-sync.frpc</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__FRPC_BIN__</string>
+    <string>-c</string>
+    <string>__FRPC_CONFIG__</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>__LOG_DIR__/frpc.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG_DIR__/frpc.log</string>
+</dict>
+</plist>

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  com.shared-sync.connd.plist —— 客户端 connd(launchd 系统级守护进程)
+
+  connd 管 nebula 子进程 + 三层阶梯 + 固定本地端点代理 127.0.0.1:8418。
+  nebula 二进制路径由 connd.yaml 的 nebula.binPath 指定(install-client.sh 写绝对路径)。
+  以 root 跑(创建 utun 设备 + 管 nebula 子进程需要)。
+
+  由 v2/install/install-client.sh 渲染 __CONND_BIN__ / __CONND_CONFIG__ / __LOG_DIR__。
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.shared-sync.connd</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__CONND_BIN__</string>
+    <string>run</string>
+    <string>-config</string>
+    <string>__CONND_CONFIG__</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>__LOG_DIR__/connd.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG_DIR__/connd.log</string>
+</dict>
+</plist>

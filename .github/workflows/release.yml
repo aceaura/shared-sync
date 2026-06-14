@@ -77,6 +77,46 @@ jobs:
           files: installer/windows/Output/*.exe
           fail_on_unmatched_files: true
 
+  # ---------- connd 跨平台二进制 ----------
+  connd-binaries:
+    name: connd 跨平台二进制
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: 计算版本号(去掉前缀 v)
+        id: ver
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+      - name: 交叉编译 5 个目标(纯 Go,CGO_ENABLED=0)
+        working-directory: v2/connd
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          mkdir -p dist
+          build() {
+            local os="$1" arch="$2" out="dist/connd-$1-$2"
+            [ "$os" = windows ] && out="$out.exe"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -ldflags "-X main.version=$VERSION" -o "$out" ./cmd/connd
+            echo "built $out"
+          }
+          build linux   amd64
+          build linux   arm64
+          build darwin  amd64
+          build darwin  arm64
+          build windows amd64
+          ls -l dist
+      - name: 上传到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: v2/connd/dist/connd-*
+          fail_on_unmatched_files: true
+
   # ---------- 服务端镜像(ghcr) ----------
   server-image:
     name: 服务端镜像 -> ghcr

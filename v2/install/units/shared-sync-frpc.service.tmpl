@@ -1,0 +1,23 @@
+# =============================================================================
+# shared-sync-frpc.service —— frpc sidecar(systemd 单元)
+#
+# 通用 frpc 服务单元,数据中心与客户端共用(配置文件不同):
+#   * 数据中心:frpc STCP【服务端】(把本地 git 注册到 VPS frps)—— 撑 T2。
+#   * 客户端  :frpc STCP【visitor】(本地暴露 t2BackendAddr)—— 撑 T2。
+#
+# 由 install-datacenter.sh / install-client.sh 渲染 __FRPC_BIN__ / __FRPC_CONFIG__。
+# =============================================================================
+[Unit]
+Description=shared-sync v2 frpc sidecar (T2 TCP relay)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=__FRPC_BIN__ -c __FRPC_CONFIG__
+Restart=always
+RestartSec=3
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

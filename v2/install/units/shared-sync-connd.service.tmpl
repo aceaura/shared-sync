@@ -1,0 +1,23 @@
+# =============================================================================
+# shared-sync-connd.service —— 客户端 connd(systemd 单元)
+#
+# connd 管 nebula 子进程 + 三层阶梯 + 固定本地端点代理 127.0.0.1:8418。
+# nebula 二进制路径通过 connd.yaml 的 nebula.binPath 指定(install-client.sh 写好)。
+#
+# 由 install-client.sh 渲染 __CONND_BIN__ / __CONND_CONFIG__。
+# 依赖 frpc(T2 上游);frpc 单元 Before 本单元启动。
+# =============================================================================
+[Unit]
+Description=shared-sync v2 connd (3-tier connection manager, local endpoint 127.0.0.1:8418)
+After=network-online.target shared-sync-frpc.service
+Wants=network-online.target shared-sync-frpc.service
+
+[Service]
+Type=simple
+ExecStart=__CONND_BIN__ run -config __CONND_CONFIG__
+Restart=always
+RestartSec=3
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

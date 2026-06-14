@@ -1,0 +1,20 @@
+# =============================================================================
+# shared-sync-nebula.service —— 数据中心节点上的 nebula(systemd 单元)
+#
+# 由 v2/install/install-datacenter.sh 渲染 + 安装。撑客户端 T0/T1 经 overlay 直达本机 git。
+# (客户端机器上 nebula 由 connd 子进程托管,不用此单元;此单元仅给数据中心常驻 nebula。)
+# =============================================================================
+[Unit]
+Description=shared-sync v2 nebula node (datacenter overlay)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=__NEBULA_BIN__ -config __NEBULA_CONFIG__
+Restart=always
+RestartSec=3
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

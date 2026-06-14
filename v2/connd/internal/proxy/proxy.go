@@ -94,8 +94,11 @@ func (p *Proxy) Accepted() int64 { return p.accepted.Load() }
 
 // Addr 返回实际监听地址(便于 :0 随机端口测试)。
 func (p *Proxy) Addr() string {
-	if p.ln != nil {
-		return p.ln.Addr().String()
+	p.mu.Lock()
+	ln := p.ln
+	p.mu.Unlock()
+	if ln != nil {
+		return ln.Addr().String()
 	}
 	return p.listenAddr
 }
@@ -107,7 +110,9 @@ func (p *Proxy) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	p.mu.Lock()
 	p.ln = ln
+	p.mu.Unlock()
 
 	// ctx 取消时关闭监听,解除 Accept 阻塞。
 	go func() {
