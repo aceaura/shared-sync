@@ -3,21 +3,42 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"time"
 
-	"github.com/aceaura/shared-sync/v2/connd/internal/fsm"
+	"github.com/aceaura/shared-sync/v2/connd/internal/ladder"
 	"gopkg.in/yaml.v3"
 )
 
 // Config 是 connd 的完整配置。时长字段用 Go duration 字符串(如 "25s")。
 type Config struct {
-	// PeerOverlayIP:对端的 overlay 虚拟 IP(被探测对象)。
+	// PeerOverlayIP:数据中心的 overlay 虚拟 IP(被探测/连接对象,如 10.77.0.2)。
 	PeerOverlayIP string `yaml:"peerOverlayIP"`
-	// RelayUnderlayIP:relay 的 underlay/公网 IP(将来用于判定路径是否经中继)。
+	// DataCenterPort:数据中心 shared-sync 服务端口(overlay 内,默认 8418)。
+	// T0/T1 上游 = PeerOverlayIP:DataCenterPort;心跳也打它。
+	DataCenterPort int `yaml:"dataCenterPort"`
+
+	// LighthouseUnderlay:lighthouse 的 underlay 地址(host 或 host:port)。
+	// 用于 hostmap 判定时排除「currentRemote 指向 lighthouse」的情况(稳健性)。
+	LighthouseUnderlay string `yaml:"lighthouseUnderlay"`
+
+	// RelayUnderlayIP:relay 的 underlay/公网 IP(诊断/兼容旧字段)。
 	RelayUnderlayIP string `yaml:"relayUnderlayIP"`
-	// ProbePort:overlay 内探测端口(占位)。
+	// ProbePort:overlay 内探测端口(兼容旧字段;Phase2 心跳用 DataCenterPort)。
 	ProbePort string `yaml:"probePort"`
+
+	// LocalProxyAddr:connd 固定本地端点监听地址(引擎连它,DESIGN_v2 §2.1)。
+	// 默认 127.0.0.1:8418。
+	LocalProxyAddr string `yaml:"localProxyAddr"`
+
+	// T2BackendAddr:T2(TCP 兜底)上游后端地址 = 本地 frpc 转发端口(Phase3 接入)。
+	// 留空表示 T2 未接入(探测恒 DOWN,代理不会切到 T2)。
+	T2BackendAddr string `yaml:"t2BackendAddr"`
+
+	// Control:nebula 控制 sshd 连接参数(查 hostmap 用,DESIGN_v2 §5)。
+	Control ControlConfig `yaml:"control"`
 
 	// Nebula 子进程相关。
 	Nebula NebulaConfig `yaml:"nebula"`
@@ -25,14 +46,28 @@ type Config struct {
 	// StatusAddr:本地状态 HTTP 监听地址(默认 127.0.0.1:4243)。
 	StatusAddr string `yaml:"statusAddr"`
 
-	// 状态机参数(DESIGN_v2.md §4)。
+	// 阶梯状态机参数(DESIGN_v2.md §4)。
 	TUp       Duration `yaml:"tUp"`       // 升级滞后窗口
 	N         int      `yaml:"n"`         // 降级阈值(连续失败次数)
-	P         Duration `yaml:"p"`         // 打洞重试周期
+	P         Duration `yaml:"p"`         // 上层探测/重试周期
 	Heartbeat Duration `yaml:"heartbeat"` // 心跳/探测间隔
 
 	// ProbeTimeout:单次探测超时。
 	ProbeTimeout Duration `yaml:"probeTimeout"`
+}
+
+// ControlConfig 是 nebula 控制 sshd 连接参数。
+type ControlConfig struct {
+	// Enabled:是否启用 hostmap 探测(查控制 sshd 判 direct/relay)。
+	// 关闭时仅靠 overlay 心跳,保守归为 T1(无法判直连)。
+	Enabled bool `yaml:"enabled"`
+	// Host/Port:sshd 监听地址(默认 127.0.0.1:2222)。
+	Host string `yaml:"host"`
+	Port int    `yaml:"port"`
+	// User:authorized_users 用户名(默认 ctl)。
+	User string `yaml:"user"`
+	// KeyPath:connd 持有的私钥路径(对应 sshd 登记的公钥)。
+	KeyPath string `yaml:"keyPath"`
 }
 
 // NebulaConfig 是 nebula 子进程配置。
@@ -66,16 +101,24 @@ func (d Duration) D() time.Duration { return time.Duration(d) }
 
 // Default 返回带合理默认值的配置(DESIGN_v2.md §4 建议值)。
 func Default() Config {
-	dc := fsm.DefaultConfig()
+	dc := ladder.DefaultConfig()
 	return Config{
-		ProbePort:    "4242",
-		StatusAddr:   "127.0.0.1:4243",
-		TUp:          Duration(dc.TUp),
-		N:            dc.N,
-		P:            Duration(dc.P),
-		Heartbeat:    Duration(dc.Heartbeat),
-		ProbeTimeout: Duration(2 * time.Second),
-		Nebula:       NebulaConfig{BinPath: "nebula"},
+		ProbePort:      "4242",
+		DataCenterPort: 8418,
+		LocalProxyAddr: "127.0.0.1:8418",
+		StatusAddr:     "127.0.0.1:4243",
+		TUp:            Duration(dc.TUp),
+		N:              dc.N,
+		P:              Duration(dc.P),
+		Heartbeat:      Duration(dc.Heartbeat),
+		ProbeTimeout:   Duration(2 * time.Second),
+		Control: ControlConfig{
+			Enabled: false,
+			Host:    "127.0.0.1",
+			Port:    2222,
+			User:    "ctl",
+		},
+		Nebula: NebulaConfig{BinPath: "nebula"},
 	}
 }
 
@@ -99,8 +142,23 @@ func (c *Config) applyDefaults() {
 	if c.ProbePort == "" {
 		c.ProbePort = d.ProbePort
 	}
+	if c.DataCenterPort <= 0 {
+		c.DataCenterPort = d.DataCenterPort
+	}
+	if c.LocalProxyAddr == "" {
+		c.LocalProxyAddr = d.LocalProxyAddr
+	}
 	if c.StatusAddr == "" {
 		c.StatusAddr = d.StatusAddr
+	}
+	if c.Control.Host == "" {
+		c.Control.Host = d.Control.Host
+	}
+	if c.Control.Port <= 0 {
+		c.Control.Port = d.Control.Port
+	}
+	if c.Control.User == "" {
+		c.Control.User = d.Control.User
 	}
 	if c.Nebula.BinPath == "" {
 		c.Nebula.BinPath = d.Nebula.BinPath
@@ -122,9 +180,15 @@ func (c *Config) applyDefaults() {
 	}
 }
 
-// FSMConfig 把配置投影成状态机参数。
-func (c Config) FSMConfig() fsm.Config {
-	return fsm.Config{
+// DataCenterAddr 返回数据中心 overlay 后端 "host:port"(T0/T1 上游 + 心跳目标)。
+func (c Config) DataCenterAddr() string {
+	return net.JoinHostPort(c.PeerOverlayIP, strconv.Itoa(c.DataCenterPort))
+}
+
+// LadderConfig 把配置投影成阶梯状态机参数(三层)。
+func (c Config) LadderConfig() ladder.Config {
+	return ladder.Config{
+		NumTiers:  3,
 		TUp:       c.TUp.D(),
 		N:         c.N,
 		P:         c.P.D(),

@@ -75,6 +75,26 @@ logging:
   format: text
 
 # -----------------------------------------------------------------------------
+# 控制 sshd —— connd 程序式查 hostmap 判 direct(T0)/relay(T1) 的权威通道
+# (DESIGN_v2 §5;Phase1b handoff:Nebula 1.10 的 SIGUSR1 不再打印 hostmap,改用此)。
+#   connd 与 nebula 同机,sshd 仅监听 127.0.0.1:2222(不对外)。
+#   connd 持有 __CTL_PUBKEY__ 对应的私钥,用一次性 ssh exec 跑 `list-hostmap -json`。
+#   渲染时替换:
+#     __SSHD_HOSTKEY__  控制 sshd 的 host key 路径(ssh-keygen 生成,容器内 /etc/nebula 下)
+#     __CTL_PUBKEY__    connd 控制公钥(ssh-ed25519 AAAA...)
+#   若不启用 hostmap 探测,可整段删除,connd 把 control.enabled 设 false(仅靠心跳,
+#   保守归 T1,无法升 T0)。
+# -----------------------------------------------------------------------------
+sshd:
+  enabled: true
+  listen: 127.0.0.1:2222
+  host_key: /etc/nebula/__SSHD_HOSTKEY__
+  authorized_users:
+    - user: ctl
+      keys:
+        - "__CTL_PUBKEY__"
+
+# -----------------------------------------------------------------------------
 # 防火墙(overlay 内流量)。默认 drop,显式放行:
 #   * ICMP   —— connd 健康探测 / 连通性诊断(心跳、RTT)。
 #   * tcp 8418 —— shared-sync 同步服务端口(server_url=http://<overlay-ip>:8418)。

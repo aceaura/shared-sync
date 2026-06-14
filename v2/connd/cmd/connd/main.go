@@ -25,8 +25,9 @@ import (
 	"github.com/aceaura/shared-sync/v2/connd/internal/config"
 	"github.com/aceaura/shared-sync/v2/connd/internal/controller"
 	"github.com/aceaura/shared-sync/v2/connd/internal/nebula"
-	"github.com/aceaura/shared-sync/v2/connd/internal/prober"
+	"github.com/aceaura/shared-sync/v2/connd/internal/proxy"
 	"github.com/aceaura/shared-sync/v2/connd/internal/statussrv"
+	"github.com/aceaura/shared-sync/v2/connd/internal/tierprobe"
 )
 
 // version 由构建时 -ldflags 注入;默认 dev。
@@ -87,8 +88,25 @@ func cmdRun(args []string) int {
 		log.Printf("connd: 未指定 -config,使用默认配置 + nebula DryRun")
 	}
 
-	// 探测器:Phase0 占位 nebula 探测器。peer 为空则退化为始终 DOWN 的探测(仍可跑)。
-	p := prober.NewNebulaProber(cfg.PeerOverlayIP, cfg.ProbePort, cfg.RelayUnderlayIP, cfg.ProbeTimeout.D())
+	// ---- 三层探测器(DESIGN_v2 §5):hostmap 判 direct/relay + overlay 心跳 + T2 探活 ----
+	dcAddr := cfg.DataCenterAddr() // 数据中心 overlay 后端 host:port(T0/T1 上游 + 心跳目标)
+	hb := tierprobe.NewTCPHeartbeat(dcAddr, cfg.ProbeTimeout.D())
+
+	var fetcher nebula.Fetcher
+	if cfg.Control.Enabled {
+		fetcher = nebula.NewSSHControl(cfg.Control.Host, cfg.Control.Port, cfg.Control.User, cfg.Control.KeyPath)
+	}
+	var t2 tierprobe.Heartbeat
+	if cfg.T2BackendAddr != "" {
+		t2 = tierprobe.NewTCPHeartbeat(cfg.T2BackendAddr, cfg.ProbeTimeout.D())
+	}
+	prb := tierprobe.NewNebulaTierProber(tierprobe.Options{
+		PeerOverlayIP:      cfg.PeerOverlayIP,
+		LighthouseUnderlay: cfg.LighthouseUnderlay,
+		Fetcher:            fetcher,
+		Heartbeat:          hb,
+		T2Probe:            t2,
+	})
 
 	neb := nebula.NewManager(nebula.Options{
 		BinPath:    cfg.Nebula.BinPath,
@@ -98,7 +116,29 @@ func cmdRun(args []string) int {
 		Stderr:     os.Stderr,
 	})
 
-	ctrl := controller.New(cfg.FSMConfig(), p, neb, cfg.ProbeTimeout.D(), nil)
+	// ---- 固定本地端点代理(DESIGN_v2 §2.1):引擎只连它,切层=原子切上游 ----
+	prx := proxy.New(cfg.LocalProxyAddr, cfg.ProbeTimeout.D())
+
+	// 层 → 上游后端:T0/T1 走 overlay 数据中心后端;T2 走本地 frpc 转发口(Phase3)。
+	upstreamOf := func(tier int) string {
+		switch tier {
+		case tierprobe.TierDirect, tierprobe.TierUDPRelay:
+			return dcAddr
+		case tierprobe.TierTCPRelay:
+			return cfg.T2BackendAddr // 空则代理拒新连接(T2 未接入)
+		}
+		return ""
+	}
+
+	ctrl := controller.New(controller.Options{
+		Cfg:           cfg.LadderConfig(),
+		Prober:        prb,
+		Proxy:         prx,
+		Nebula:        neb,
+		UpstreamOf:    upstreamOf,
+		ProbeTimeout:  cfg.ProbeTimeout.D(),
+		LocalEndpoint: cfg.LocalProxyAddr,
+	})
 
 	srv := statussrv.New(cfg.StatusAddr, ctrl)
 	srvErr, err := srv.Start()
@@ -107,6 +147,7 @@ func cmdRun(args []string) int {
 		return 1
 	}
 	log.Printf("connd: 状态端点 http://%s/status", srv.Addr())
+	log.Printf("connd: 固定本地端点 %s → 数据中心 %s(切层原子切上游)", cfg.LocalProxyAddr, dcAddr)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -114,8 +155,9 @@ func cmdRun(args []string) int {
 	runErr := make(chan error, 1)
 	go func() { runErr <- ctrl.Run(ctx) }()
 
-	log.Printf("connd %s: 控制循环启动(peer=%q heartbeat=%s T_up=%s N=%d P=%s)",
-		version, cfg.PeerOverlayIP, cfg.Heartbeat.D(), cfg.TUp.D(), cfg.N, cfg.P.D())
+	log.Printf("connd %s: 控制循环启动(peer=%q localEndpoint=%s control_sshd=%v T2=%q heartbeat=%s T_up=%s N=%d P=%s)",
+		version, cfg.PeerOverlayIP, cfg.LocalProxyAddr, cfg.Control.Enabled, cfg.T2BackendAddr,
+		cfg.Heartbeat.D(), cfg.TUp.D(), cfg.N, cfg.P.D())
 
 	select {
 	case <-ctx.Done():
@@ -171,14 +213,30 @@ func cmdStatus(args []string) int {
 }
 
 func printStatus(st controller.Status) {
-	fmt.Printf("状态机   : %s\n", st.State)
-	fmt.Printf("当前路径 : %s\n", st.Path)
+	fmt.Printf("当前层   : %s%s\n", st.Tier, viaVpsLabel(st.ViaVps, st.Tier))
 	fmt.Printf("对端     : %s\n", emptyDash(st.Peer))
+	fmt.Printf("本地端点 : %s\n", emptyDash(st.LocalEndpoint))
+	fmt.Printf("当前上游 : %s\n", emptyDash(st.Upstream))
 	fmt.Printf("RTT      : %.1f ms\n", st.RTTMs)
+	if st.CurrentRemote != "" {
+		fmt.Printf("underlay : %s\n", st.CurrentRemote)
+	}
+	fmt.Printf("各层健康 : T0=%s T1=%s T2=%s\n",
+		st.TiersHealth["T0"], st.TiersHealth["T1"], st.TiersHealth["T2"])
 	fmt.Printf("Nebula   : %s\n", st.Nebula)
 	fmt.Printf("保持自   : %s\n", fmtTime(st.Since))
 	fmt.Printf("上次切换 : %s\n", fmtTime(st.LastSwitch))
 	fmt.Printf("更新于   : %s\n", fmtTime(st.UpdatedAt))
+}
+
+func viaVpsLabel(viaVps bool, tier string) string {
+	if tier == "RECONNECTING" {
+		return ""
+	}
+	if viaVps {
+		return "(经 VPS)"
+	}
+	return "(直连,不经 VPS)"
 }
 
 func emptyDash(s string) string {

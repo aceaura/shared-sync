@@ -1,27 +1,48 @@
-# connd 示例配置(shared-sync v2)。
+# connd 示例配置(shared-sync v2,Phase2)。
 # 时长字段用 Go duration 字符串(如 "25s"、"1m")。未列出的字段取内置默认。
 
-# 对端 overlay 虚拟 IP(被探测对象)。两端共用同一 overlay 网段。
-peerOverlayIP: 10.77.0.3
+# ---- 数据中心(被连接对象)---------------------------------------------------
+# 数据中心的 overlay 虚拟 IP。两端共用同一 overlay 网段。
+peerOverlayIP: 10.77.0.2
+# 数据中心 shared-sync 服务端口(overlay 内)。T0/T1 上游 = peerOverlayIP:dataCenterPort,
+# 心跳也打它。
+dataCenterPort: 8418
 
-# relay 的 underlay/公网 IP(Phase1 用于判定路径是否经中继;Phase0 暂未使用)。
-relayUnderlayIP: 203.0.113.10
+# lighthouse 的 underlay 地址(host 或 host:port)。用于 hostmap 判定时排除
+# 「currentRemote 恰指向 lighthouse」的情况(稳健性)。一般填 VPS 公网 IP:4242。
+lighthouseUnderlay: 54.198.93.78:4242
 
-# overlay 内探测端口(占位;真实可换 ICMP)。
-probePort: "4242"
+# ---- 固定本地端点(DESIGN_v2 §2.1)------------------------------------------
+# connd 在此监听 TCP;shared-sync 引擎 server_url 填 http://<这里>/shared.git,永不变。
+# 切层 = 原子把这个端点的上游换到当前激活层后端。
+localProxyAddr: 127.0.0.1:8418
 
-# 本地状态 HTTP 端点监听地址。仅绑回环。
+# ---- T2(TCP 兜底)后端(Phase3 接入)--------------------------------------
+# T2 上游 = 本地 frpc 的 local-forward 端口(数据中心经 VPS frps 反向隧道暴露)。
+# 留空表示 T2 未接入:探测恒 DOWN,代理不会切到 T2(Phase2 默认留空)。
+t2BackendAddr: ""
+
+# ---- nebula 控制 sshd(查 hostmap 判 direct/relay,DESIGN_v2 §5)-----------
+# 需在 nebula 节点配置里开启 sshd(见 v2/nebula/config/node.yml.tmpl 的 sshd 块)。
+control:
+  enabled: true          # false 则仅靠 overlay 心跳,保守归 T1(无法判直连 T0)
+  host: 127.0.0.1
+  port: 2222
+  user: ctl
+  keyPath: /etc/connd/ctl_key   # connd 持有的私钥(对应 sshd authorized_users 公钥)
+
+# ---- 本地状态 HTTP 端点(仅回环)-------------------------------------------
 statusAddr: 127.0.0.1:4243
 
-# 状态机参数(DESIGN_v2.md §4)。
-tUp: 25s        # 升级滞后窗口:直连连续健康 >= T_up 才从 FALLBACK 升级 DIRECT(防抖)
-n: 3            # 降级阈值:DIRECT 下直连连续失败 N 次立即降级 FALLBACK
-p: 45s          # 打洞重试周期:FALLBACK 下每 P 秒触发一次后台打洞重试
+# ---- 阶梯状态机参数(DESIGN_v2.md §4)---------------------------------------
+tUp: 25s        # 升级滞后窗口:更高层连续健康 >= T_up 才升上去(防抖)
+n: 3            # 降级阈值:当前层连续失败 N 次即落到下方仍健康的最高层
+p: 45s          # 上层探测/重试周期
 heartbeat: 7s   # 心跳/探测间隔
 probeTimeout: 2s  # 单次探测超时
 
-# 受管的 nebula 子进程。
+# ---- 受管的 nebula 子进程 ---------------------------------------------------
 nebula:
-  binPath: nebula                 # nebula 二进制(默认从 PATH 查找)
-  configPath: /etc/nebula/node.yml  # 传给 nebula 的 -config
-  dryRun: false                   # true 则不真正 exec(无 nebula 环境/CI 跑通链路用)
+  binPath: nebula                  # nebula 二进制(默认从 PATH 查找)
+  configPath: /etc/nebula/node.yml # 传给 nebula 的 -config
+  dryRun: false                    # true 则不真正 exec(无 nebula 环境/CI 跑通链路用)

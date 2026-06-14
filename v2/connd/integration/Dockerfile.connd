@@ -1,0 +1,17 @@
+# Dockerfile.connd —— Phase2 真机集成验证镜像。
+#
+# 把 connd(Linux 二进制)+ nebula + ssh 客户端 + git 打进一个 alpine 容器,
+# 用 --cap-add NET_ADMIN --device /dev/net/tun 跑起来,即可:
+#   - 由 connd 管理 nebula 子进程,连真 lighthouse(54.198.93.78);
+#   - connd 起本地代理 127.0.0.1:8418,经 overlay 转发到数据中心 8418;
+#   - 容器内 git ls-remote http://127.0.0.1:8418/... 走固定本地端点验证。
+#
+# connd 二进制由宿主 `GOOS=linux GOARCH=<arch> go build` 产出后 COPY 进来。
+FROM nebulaoss/nebula:latest AS nebula
+FROM alpine:3.20
+RUN apk add --no-cache bash iproute2 iputils curl git openssh-client jq
+COPY --from=nebula /nebula /usr/local/bin/nebula
+COPY connd /usr/local/bin/connd
+# 入口由 run-integration.sh 用 `docker run ... connd run -config ...` 覆盖,
+# 这里给个默认便于交互调试。
+ENTRYPOINT ["/bin/bash"]

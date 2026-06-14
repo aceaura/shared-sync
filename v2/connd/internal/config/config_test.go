@@ -52,14 +52,63 @@ nebula:
 // DefaultP 暴露默认 P 给测试断言。
 func DefaultP() time.Duration { return Default().P.D() }
 
-// TestFSMConfigProjection:配置正确投影为状态机参数。
-func TestFSMConfigProjection(t *testing.T) {
+// TestLadderConfigProjection:配置正确投影为阶梯状态机参数(三层)。
+func TestLadderConfigProjection(t *testing.T) {
 	c := Default()
 	c.TUp = Duration(30 * time.Second)
 	c.N = 4
-	fc := c.FSMConfig()
-	if fc.TUp != 30*time.Second || fc.N != 4 {
-		t.Fatalf("投影不符: %+v", fc)
+	lc := c.LadderConfig()
+	if lc.TUp != 30*time.Second || lc.N != 4 || lc.NumTiers != 3 {
+		t.Fatalf("投影不符: %+v", lc)
+	}
+}
+
+// TestDataCenterAddr:数据中心后端地址组装正确。
+func TestDataCenterAddr(t *testing.T) {
+	c := Default()
+	c.PeerOverlayIP = "10.77.0.2"
+	c.DataCenterPort = 8418
+	if got := c.DataCenterAddr(); got != "10.77.0.2:8418" {
+		t.Fatalf("DataCenterAddr 不符: %q", got)
+	}
+}
+
+// TestLoadPhase2Fields:Phase2 新增字段能从 YAML 加载。
+func TestLoadPhase2Fields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "p2.yaml")
+	content := `
+peerOverlayIP: 10.77.0.2
+dataCenterPort: 8418
+localProxyAddr: 127.0.0.1:8418
+t2BackendAddr: 127.0.0.1:18418
+lighthouseUnderlay: 54.198.93.78:4242
+control:
+  enabled: true
+  port: 2222
+  keyPath: /etc/connd/ctl_key
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if c.LocalProxyAddr != "127.0.0.1:8418" {
+		t.Fatalf("localProxyAddr 不符: %q", c.LocalProxyAddr)
+	}
+	if c.T2BackendAddr != "127.0.0.1:18418" {
+		t.Fatalf("t2BackendAddr 不符: %q", c.T2BackendAddr)
+	}
+	if !c.Control.Enabled || c.Control.Port != 2222 || c.Control.KeyPath != "/etc/connd/ctl_key" {
+		t.Fatalf("control 不符: %+v", c.Control)
+	}
+	if c.Control.User != "ctl" { // 未给取默认
+		t.Fatalf("control.user 应默认 ctl,实际 %q", c.Control.User)
+	}
+	if c.DataCenterAddr() != "10.77.0.2:8418" {
+		t.Fatalf("DataCenterAddr 不符: %q", c.DataCenterAddr())
 	}
 }
 

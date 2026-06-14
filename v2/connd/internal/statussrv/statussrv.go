@@ -1,8 +1,10 @@
 // Package statussrv 暴露 connd 状态的本地 HTTP 端点。
 //
-// 默认监听 127.0.0.1:4243,GET /status 返回 JSON:
+// 默认监听 127.0.0.1:4243,GET /status 返回 JSON(controller.Status):
 //
-//	{path, state, peer, rttMs, since, lastSwitch, nebula, updatedAt}
+//	{tier, viaVps, peer, upstream, localEndpoint, rttMs, currentRemote,
+//	 since, lastSwitch, tiersHealth, reconnecting, nebula, updatedAt,
+//	 path, state}
 //
 // 仅绑本地回环,不对外。
 package statussrv
