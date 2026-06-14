@@ -63,6 +63,24 @@ bash v2/install/install-client.sh     --status        # 含 connd 当前层(T0/T
 
 ## Windows 客户端
 
-connd / frpc / nebula 均有 Windows 二进制(Release 提供 `connd-windows-amd64.exe`)。
-Windows 服务化建议用 NSSM 把 `connd run -config connd.yaml` 注册为服务(类比
-`client/daemon/README.md` 的 Windows 章节);本目录脚本暂只覆盖 Linux/macOS。
+用 PowerShell 脚本 [`install-client.ps1`](install-client.ps1)(管理员运行):自动下载
+connd(Release)/nebula(含 Wintun)/frpc,消费 enroll 接入包,改写路径、锁私钥权限、
+注册 connd+frpc 计划任务(开机自启+崩溃重启)并启动。
+
+```powershell
+# 操作机:为这台 Windows 签发接入包,拷过去
+#   v2/deploy/enroll-client.sh winpc <VPS公网IP>     →  v2/deploy/dist/winpc/
+# Windows(管理员 PowerShell):
+.\install-client.ps1 -Bundle .\winpc -SharedDir C:\SharedWork
+.\install-client.ps1 -Action status        # 看当前层 T0/T1/T2
+.\install-client.ps1 -Action uninstall
+```
+
+前置:Windows 10/11 自带 OpenSSH 客户端(connd 查 nebula hostmap 判 T0/T1 需 `ssh.exe`)。
+引擎接入同样填 `server_url = http://127.0.0.1:8418/shared.git`。
+
+## 本机数据中心(开发/小规模)
+
+Linux 节点用 `install-datacenter.sh`;macOS/本机便捷用容器版
+[`v2/deploy/run-datacenter.sh`](../deploy/run-datacenter.sh)(git+nebula 10.77.0.2+frpc,
+`--restart unless-stopped` 常驻;`--stop` 停)。
