@@ -28,6 +28,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late final TextEditingController _stableCtrl;
   late final TextEditingController _retriesCtrl;
   bool _saving = false;
+  bool _importing = false;
 
   @override
   void initState() {
@@ -62,6 +63,35 @@ class _SettingsPageState extends State<SettingsPage> {
     final dir = await getDirectoryPath();
     if (dir != null) {
       _dirCtrl.text = dir;
+    }
+  }
+
+  /// 导入接入包(enroll 产出目录):落到本机固定数据目录、改写路径、回填
+  /// server_url 并保存。连接层(connd/nebula/frpc)由安装服务接管(DESIGN_v2 §Phase7)。
+  /// 目前先支持选【目录】;zip 支持留待后续(见设计文档 TODO)。
+  Future<void> _importBundle() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final dir = await getDirectoryPath();
+    if (dir == null) return; // 用户取消。
+    setState(() => _importing = true);
+    try {
+      final result = await widget.state.importBundle(dir);
+      if (!mounted) return;
+      // 把固定本地端点回填到服务器地址框(已配置时 importBundle 已保存配置)。
+      _serverCtrl.text = result.serverUrl;
+      final who = result.clientName.isEmpty ? '' : '(${result.clientName})';
+      messenger.showSnackBar(SnackBar(
+        content: Text('接入包已导入$who → ${result.targetDir};'
+            '连接层将由安装服务接管。共享目录设好并保存即可同步。'),
+      ));
+    } on ImportBundleException catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('导入失败:${e.message}')));
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('导入失败:$e')));
+    } finally {
+      if (mounted) setState(() => _importing = false);
     }
   }
 
@@ -179,6 +209,38 @@ class _SettingsPageState extends State<SettingsPage> {
                         selected: {widget.state.themeMode},
                         onSelectionChanged: (s) =>
                             widget.state.setThemeMode(s.first),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Card(
+                margin: EdgeInsets.zero,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('接入包(v2 自适应连接)',
+                          style: Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(height: 8),
+                      const Text('导入管理员下发的接入包(enroll 产出目录),App 会把'
+                          '连接配置与证书写入本机固定数据目录,并自动把服务器地址'
+                          '设为本地连接端点。连接层(connd/nebula/frpc)由安装服务接管。'),
+                      const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        onPressed:
+                            (_saving || _importing) ? null : _importBundle,
+                        icon: _importing
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.download_for_offline),
+                        label: const Text('导入接入包…'),
                       ),
                     ],
                   ),
