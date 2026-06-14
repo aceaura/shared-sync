@@ -143,6 +143,48 @@ func TestProbeTiersWithT2Backend(t *testing.T) {
 	}
 }
 
+// blockingHeartbeat 模拟「UDP 被封死时 overlay TCP 拨号一直阻塞到 ctx 超时」的心跳:
+// 它不主动返回,直到上层 ctx 取消(探测超时)才报不可达。用来复现「慢探测拖累其它层」。
+type blockingHeartbeat struct{}
+
+func (blockingHeartbeat) Beat(ctx context.Context) (bool, time.Duration) {
+	<-ctx.Done() // 阻塞到探测超时(模拟挂死的 overlay 拨号)
+	return false, 0
+}
+
+// TestProbeTiersSlowOverlayDoesNotStarveT2 是 Phase3 回归测试:
+// 当 overlay 心跳阻塞到整个探测超时(UDP 封死),T2 后端探测仍须被正确判为 UP——
+// 即各层并发探测,慢的 overlay 不能吃光预算把健康的 T2 误判成 DOWN。
+// (该 bug 曾导致 connd 在 UDP 封死时进 RECONNECTING 而非降级到 T2。)
+func TestProbeTiersSlowOverlayDoesNotStarveT2(t *testing.T) {
+	p := NewNebulaTierProber(Options{
+		PeerOverlayIP: "10.77.0.2",
+		Heartbeat:     blockingHeartbeat{}, // overlay 拨号挂死
+		T2Probe:       FakeHeartbeat{Reachable: true, RTTVal: 30 * time.Millisecond},
+	})
+	// 模拟 controller 注入的探测超时(probeTimeout)。
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	res := p.ProbeTiers(ctx)
+	elapsed := time.Since(start)
+
+	h := res.Health()
+	if h[TierDirect] != ladder.TierDown || h[TierUDPRelay] != ladder.TierDown {
+		t.Fatalf("overlay 挂死时 T0/T1 应 DOWN,实际 %v", h)
+	}
+	if h[TierTCPRelay] != ladder.TierUp {
+		t.Fatalf("overlay 挂死不应饿死 T2 探测:T2 应仍判 UP,实际 %v", h)
+	}
+	// 并发探测下,总耗时由最慢的 overlay(到超时)决定,而非两者相加;
+	// 若退化成串行且 T2 在 overlay 之后,这里仍会 UP,但 elapsed 会明显更长。
+	// 主要断言是上面的 T2=UP;此处给个宽松上界防止意外退化。
+	if elapsed > 1*time.Second {
+		t.Fatalf("探测耗时异常(%v),疑似串行化退化", elapsed)
+	}
+}
+
 // TestFakeTierProberScript:脚本探测器按序返回。
 func TestFakeTierProberScript(t *testing.T) {
 	fp := NewScriptedTierProber("10.77.0.2",

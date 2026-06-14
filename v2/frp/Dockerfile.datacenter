@@ -1,0 +1,27 @@
+# Dockerfile.datacenter —— Phase3 数据中心容器:复用生产 git server 镜像 + nebula 节点 + frpc(STCP 服务端)。
+#
+# 这一个容器即 DESIGN_v2 §3 的「数据中心」:
+#   * git server   直接复用生产镜像 ghcr.io/aceaura/shared-sync-server(nginx+git-http-backend,
+#                  serve shared.git / current 分支,监听容器内 80);
+#   * nebula 节点  node-company=10.77.0.3,连真 lighthouse(54.198.93.78),撑客户端 T0/T1;
+#   * frpc(STCP)  把本地 git(80)注册到 VPS frps,让客户端 visitor 经 T2(TCP)也达同一 git。
+#
+# 即 T0/T1(overlay)与 T2(frp)抵达【同一个 git server】,验证切层对引擎透明、内容一致。
+#
+# 不自行实现 git-http,避免重造轮子;只在生产镜像上叠加 nebula+frpc。
+FROM nebulaoss/nebula:latest AS nebula
+
+FROM ghcr.io/aceaura/shared-sync-server:latest
+
+# 生产镜像是 alpine;补 nebula 运行/诊断所需。
+USER root
+RUN apk add --no-cache iproute2 iputils
+
+COPY --from=nebula /nebula /usr/local/bin/nebula
+COPY frpc /usr/local/bin/frpc
+
+# 数据中心容器入口:起生产 git server(后台)→ 起 nebula → 起 frpc(STCP 服务端,前台)。
+COPY datacenter-entrypoint.sh /usr/local/bin/datacenter-entrypoint.sh
+RUN chmod +x /usr/local/bin/datacenter-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/datacenter-entrypoint.sh"]

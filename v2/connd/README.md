@@ -183,11 +183,21 @@ PASS: git ls-remote http://127.0.0.1:8418/shared.git 经本地端点成功(HEAD 
 另:把 lighthouseUnderlay 设为 54.198.93.78 → 同一链路判为 T1(viaVps=true),本地端点 git ls-remote 仍通。
 ```
 
-## 给 Phase3 的接口(T2 接入点)
+## T2 接入(Phase3 ✅ 已完成并端到端验证)
 
-- **代理 T2 上游** = `config.T2BackendAddr`(本地 frpc 的 local-forward 端口)。Phase3 把
-  数据中心经 VPS frps 反向隧道暴露后,填这个本地端口即可,controller 的 `upstreamOf(TierTCPRelay)`
-  自动返回它。
-- **T2 健康探测接口** = `tierprobe.Heartbeat`(`Beat(ctx) (reachable, rtt)`)。Phase3 注入
-  一个对 `T2BackendAddr` 做 TCP/HTTP 探活的实现(`tierprobe.NewTCPHeartbeat(addr, timeout)`
-  已可直接用),`tierprobe.Options.T2Probe` 接上即并入阶梯,T2 即可被升降级调度。
+T2(frp STCP TCP 兜底)已并入阶梯,真连真 VPS 三态实测通过(`v2/frp/`,DESIGN_v2 §10 Phase3)。
+connd 侧**无逻辑改动**,接入点如下(只填一行配置即生效):
+
+- **代理 T2 上游** = `config.T2BackendAddr`(本地 frpc visitor 的 local-forward 端口,如
+  `127.0.0.1:18418`)。controller 的 `upstreamOf(TierTCPRelay)` 自动返回它;切到 T2 时
+  代理上游原子切到此端口,引擎经同一固定端点即走 frp TCP 隧道抵达数据中心 git。
+- **T2 健康探测** = `tierprobe.NewTCPHeartbeat(T2BackendAddr, probeTimeout)`,经
+  `tierprobe.Options.T2Probe` 注入,即并入阶梯被升降级调度。
+- **frpc 由谁起**:Phase3 e2e 用 sidecar 常驻(`v2/frp/client-entrypoint.sh`);connd 也可
+  托管(像管 nebula 那样 fork/监督),接口不变(只认 `T2BackendAddr` 这个本地口)。
+
+> **并发探测(Phase3 修)**:`tierprobe.ProbeTiers` 三层探测(overlay 心跳 / hostmap / T2)
+> **并发**执行,共享 `probeTimeout`。曾因串行 + UDP 封死时 overlay 拨号阻塞到超时耗尽预算,
+> 使 T2 探测在已超时 ctx 上瞬间失败、误判 T2 DOWN → 该降级 T2 时却进 RECONNECTING。
+> 各层本就独立(§5),并发后慢/挂的层不再拖累别层。回归测试
+> `TestProbeTiersSlowOverlayDoesNotStarveT2`。

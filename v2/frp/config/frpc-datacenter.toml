@@ -1,0 +1,36 @@
+# =============================================================================
+# frpc-datacenter.toml —— 数据中心节点上的 frpc(STCP【服务端】角色)
+#
+# 角色(DESIGN_v2 §4,T2):把数据中心本地 git server(8418)注册成一个 STCP proxy
+# 暴露给 VPS frps 中继。【不在 VPS 公网开端口】——只有持同一 secretKey 的 visitor
+# 经 frps 撮合后,才能建立到本机 git 的端到端隧道。
+#
+# 数据流:
+#   客户端 visitor ──TCP──► VPS frps(7000)──撮合──► 本 frpc ──► 127.0.0.1:8418 (git)
+#   (frps 只转发加密的 STCP 流量,读不到 git 明文)
+#
+# 占位符(部署时替换;secret 不入库):
+#   __FRP_SERVER_ADDR__   VPS 公网 IP(如 54.198.93.78)
+#   __FRP_AUTH_TOKEN__    接入 frps 的共享口令(= frps.toml 的 auth.token)
+#   __FRP_STCP_SECRET__   STCP 端到端密钥(visitor 必须同值)
+#   __GIT_LOCAL_ADDR__    本机 git server 监听地址(默认 127.0.0.1)
+#   __GIT_LOCAL_PORT__    本机 git server 端口(默认 8418)
+# =============================================================================
+
+serverAddr = "__FRP_SERVER_ADDR__"
+serverPort = 7000
+
+auth.method = "token"
+auth.token = "__FRP_AUTH_TOKEN__"
+
+log.to = "console"
+log.level = "info"
+
+# STCP【服务端】proxy:把本地 git 暴露给中继。
+# serverName(隧道名)= visitor 端的 serverName 必须一致;secretKey 必须一致。
+[[proxies]]
+name = "ss-git"
+type = "stcp"
+secretKey = "__FRP_STCP_SECRET__"
+localIP = "__GIT_LOCAL_ADDR__"
+localPort = __GIT_LOCAL_PORT__

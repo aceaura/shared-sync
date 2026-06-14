@@ -34,3 +34,10 @@ v2/nebula/certs/
 # Go 编译产物
 v2/connd/connd
 v2/connd/bin/
+
+# v2 frp 口令/密钥(绝不入库,用 secret.env.example 复制)
+v2/frp/secret.env
+# frp 二进制(运行期下载,不入库)
+v2/frp/bin/
+v2/frp/frps
+v2/frp/frpc

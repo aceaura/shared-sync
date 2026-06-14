@@ -55,34 +55,58 @@ func NewNebulaTierProber(opt Options) *NebulaTierProber {
 func (p *NebulaTierProber) Peer() string { return p.peerOverlayIP }
 
 // ProbeTiers 实现 TierProber:一次全量三层探测。
+//
+// 三个探测(overlay 心跳 / hostmap / T2 后端)**并发**执行。这很关键:它们共享
+// 调用方注入的探测超时(probeTimeout),若串行,UDP 被封死时 overlay 心跳的 TCP
+// 拨号会一直阻塞到超时、耗尽整个预算,导致后跑的 T2 探测在已超时的 ctx 上瞬间失败
+// (误判 T2 DOWN → connd 该降级 T2 时却进了 RECONNECTING)。各层本就互相独立
+// (DESIGN_v2 §5「每层独立探测」),并发探测让任一层的慢/挂都不拖累其它层。
 func (p *NebulaTierProber) ProbeTiers(ctx context.Context) Result {
 	at := time.Now()
 
+	var (
+		reachable     bool          // overlay 心跳是否通
+		rtt           time.Duration // overlay 心跳 RTT
+		peerPath      = nebula.PeerUnknown
+		currentRemote string
+		t2Healthy     bool
+		t2RTT         time.Duration
+		wg            sync.WaitGroup
+	)
+
 	// 1) overlay 心跳(权威健康兜底,也驱动 nebula promote)。
-	var reachable bool
-	var rtt time.Duration
 	if p.hb != nil {
-		reachable, rtt = p.hb.Beat(ctx)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			reachable, rtt = p.hb.Beat(ctx)
+		}()
 	}
 
 	// 2) hostmap 判 direct/relay(滞后,需心跳兜)。
-	peerPath := nebula.PeerUnknown
-	currentRemote := ""
 	if p.fetcher != nil {
-		if hr, err := nebula.QueryHostmap(ctx, p.fetcher, p.peerOverlayIP, p.lighthouseUnderlay); err == nil {
-			peerPath = hr.Path
-			currentRemote = hr.CurrentRemote
-		}
-		// QueryHostmap 失败(如 sshd 暂不可用):peerPath 保持 UNKNOWN。
-		// 若心跳仍通,Classify 会归为 T1(保守不误升 T0),符合设计。
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if hr, err := nebula.QueryHostmap(ctx, p.fetcher, p.peerOverlayIP, p.lighthouseUnderlay); err == nil {
+				peerPath = hr.Path
+				currentRemote = hr.CurrentRemote
+			}
+			// QueryHostmap 失败(如 sshd 暂不可用):peerPath 保持 UNKNOWN。
+			// 若心跳仍通,Classify 会归为 T1(保守不误升 T0),符合设计。
+		}()
 	}
 
-	// 3) T2 后端探活(Phase3 接入)。
-	var t2Healthy bool
-	var t2RTT time.Duration
+	// 3) T2 后端探活(Phase3 接入)。独立于 overlay 探测,不被其阻塞拖累。
 	if p.t2 != nil {
-		t2Healthy, t2RTT = p.t2.Beat(ctx)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			t2Healthy, t2RTT = p.t2.Beat(ctx)
+		}()
 	}
+
+	wg.Wait()
 
 	tiers := Classify(peerPath, reachable, rtt, t2Healthy, t2RTT)
 

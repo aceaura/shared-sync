@@ -1,0 +1,74 @@
+# =============================================================================
+# node-datacenter.yml.tmpl —— 数据中心 nebula 节点配置(node-company=10.77.0.3)。
+#
+# 数据中心是 T0/T1 的 overlay 对端:客户端 connd 经 overlay 直达本机 git 8418。
+# 与普通客户端节点的差别:无需控制 sshd(只有客户端 connd 才查 hostmap),故省略 sshd 块。
+#
+# 占位符(run-e2e.sh 渲染):
+#   __NODE_CERT__ / __NODE_KEY__   node-company.crt / .key
+#   __LIGHTHOUSE_IP__              lighthouse 公网 IP(54.198.93.78)
+# =============================================================================
+
+pki:
+  ca: /etc/nebula/ca.crt
+  cert: /etc/nebula/__NODE_CERT__
+  key: /etc/nebula/__NODE_KEY__
+
+static_host_map:
+  "10.77.0.1": ["__LIGHTHOUSE_IP__:4242"]
+
+lighthouse:
+  am_lighthouse: false
+  serve_dns: false
+  hosts:
+    - "10.77.0.1"
+  interval: 60
+
+listen:
+  host: "0.0.0.0"
+  port: 4242
+
+punchy:
+  punch: true
+  respond: true
+  delay: 1s
+  respond_delay: 5s
+
+relay:
+  am_relay: false
+  use_relays: true
+  relays:
+    - "10.77.0.1"
+
+tun:
+  disabled: false
+  dev: nebula1
+  drop_local_broadcast: false
+  drop_multicast: false
+  tx_queue: 500
+  mtu: 1300
+
+logging:
+  level: info
+  format: text
+
+# 防火墙:放行 overlay 内 ICMP(心跳/诊断)+ tcp 80(生产 git 镜像监听端口)。
+# 客户端 connd 经 overlay 直达 10.77.0.3:80 做 T0/T1 心跳与 git 转发。
+firewall:
+  outbound_action: drop
+  inbound_action: drop
+  conntrack:
+    tcp_timeout: 12m
+    udp_timeout: 3m
+    default_timeout: 10m
+  outbound:
+    - port: any
+      proto: any
+      host: any
+  inbound:
+    - port: any
+      proto: icmp
+      host: any
+    - port: 80
+      proto: tcp
+      host: any

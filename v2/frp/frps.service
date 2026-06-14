@@ -1,0 +1,22 @@
+# =============================================================================
+# frps.service —— VPS 上常驻 frp 中继服务器(systemd 单元,T2 兜底层 VPS 侧)
+#
+# 由 v2/frp/deploy-frps.sh 安装到 /etc/systemd/system/frps.service。
+# 二进制 /usr/local/bin/frps,配置 /etc/frp/frps.toml(含注入后的 secret)。
+# =============================================================================
+[Unit]
+Description=frp server (shared-sync v2 T2 TCP relay)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/frps -c /etc/frp/frps.toml
+Restart=always
+RestartSec=3
+LimitNOFILE=1048576
+# 最小权限:仅需读配置 + 监听 7000/7500,不需要 root 的能力,但为简单起见用 root 跑。
+User=root
+
+[Install]
+WantedBy=multi-user.target

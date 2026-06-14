@@ -1,0 +1,39 @@
+# =============================================================================
+# frpc-visitor.toml.tmpl —— 客户端节点上的 frpc(STCP【visitor】角色)【模板】
+#
+# 角色(DESIGN_v2 §4,T2):在客户端本地 127.0.0.1:<bindPort> 暴露一个端口;
+# 连这个本地端口,即经 VPS frps 撮合的 STCP 隧道抵达【数据中心 git】。
+#
+# >>> 这个本地端口(bindAddr:bindPort)就是 connd 的 t2BackendAddr <<<
+# connd 把 T2 上游(proxy upstream)与 T2 健康探测都指向它(无需改 connd 逻辑)。
+#
+# 数据流:
+#   connd 代理(127.0.0.1:8418)──切到 T2──► 本 visitor(127.0.0.1:__VISITOR_PORT__)
+#     ──TCP──► VPS frps(7000)──撮合──► 数据中心 frpc ──► 数据中心 git(8418)
+#
+# 占位符(部署时替换;secret 不入库):
+#   __FRP_SERVER_ADDR__   VPS 公网 IP(如 54.198.93.78)
+#   __FRP_AUTH_TOKEN__    接入 frps 的共享口令(= frps.toml 的 auth.token)
+#   __FRP_STCP_SECRET__   STCP 端到端密钥(= 数据中心 frpc 的 secretKey)
+#   __VISITOR_BIND_ADDR__ visitor 本地监听地址(默认 127.0.0.1,仅回环)
+#   __VISITOR_PORT__      visitor 本地端口(connd t2BackendAddr 用它,默认 18418)
+# =============================================================================
+
+serverAddr = "__FRP_SERVER_ADDR__"
+serverPort = 7000
+
+auth.method = "token"
+auth.token = "__FRP_AUTH_TOKEN__"
+
+log.to = "console"
+log.level = "info"
+
+# STCP visitor:在本地开 bindPort,连它即经隧道到 serverName 对应的数据中心 git。
+# serverName 必须 = 数据中心 frpc 的 proxy name("ss-git");secretKey 必须一致。
+[[visitors]]
+name = "ss-git-visitor"
+type = "stcp"
+serverName = "ss-git"
+secretKey = "__FRP_STCP_SECRET__"
+bindAddr = "__VISITOR_BIND_ADDR__"
+bindPort = __VISITOR_PORT__

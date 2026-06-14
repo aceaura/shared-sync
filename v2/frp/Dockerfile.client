@@ -1,0 +1,24 @@
+# Dockerfile.client —— Phase3 客户端容器:connd + 真 nebula + frpc(STCP visitor) + git 客户端。
+#
+# 客户端节点(DESIGN_v2 §3):
+#   * connd          管 nebula 子进程 + 三层阶梯 + 固定本地端点代理 127.0.0.1:8418;
+#   * nebula         node-home=10.77.0.2,连真 lighthouse,撑 T0/T1;
+#   * frpc(visitor) STCP visitor,本地 127.0.0.1:18418 → 经 VPS frps → 数据中心 git;
+#                    这个本地端口 = connd 的 t2BackendAddr(T2 上游 + T2 健康探测)。
+#   * git            引擎角色:对固定端点 127.0.0.1:8418 做 ls-remote/clone/push。
+#
+# UDP 封死实验:容器以 --cap-add NET_ADMIN 跑,可在容器内 iptables DROP 出站 UDP,
+# 令 nebula(UDP 4242)T0/T1 全 DOWN,验证 connd 自动降级到 T2(frp TCP)。
+FROM nebulaoss/nebula:latest AS nebula
+FROM alpine:3.20
+
+RUN apk add --no-cache bash iproute2 iputils iptables curl git openssh-client jq
+
+COPY --from=nebula /nebula /usr/local/bin/nebula
+COPY frpc   /usr/local/bin/frpc
+COPY connd  /usr/local/bin/connd
+
+COPY client-entrypoint.sh /usr/local/bin/client-entrypoint.sh
+RUN chmod +x /usr/local/bin/client-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/client-entrypoint.sh"]

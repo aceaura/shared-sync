@@ -1,0 +1,44 @@
+# =============================================================================
+# frps.toml —— VPS 上的 frp 中继服务器(T2 TCP 兜底层的 VPS 侧,DESIGN_v2 §4)
+#
+# 角色:数据中心与客户端都对它发起【出站】TCP 连接;frps 在两者间撮合 STCP 隧道。
+# 数据中心 git(8418)经 STCP 暴露给中继,但【不在 VPS 公网开任何业务端口】——
+# 只有持同一 secretKey 的 visitor 才能经 frps 抵达数据中心 git(端到端,VPS 读不到内容)。
+#
+# 端口约定(务必避开 VPS 既有端口:UDP/TCP 4242=nebula、TCP 8418=ss-server、22=ssh):
+#   bindPort = 7000   控制/数据复用端口(客户端+数据中心 frpc 连这里)。
+#   STCP 不在 VPS 上开 remotePort,故 frps 只需这一个对外端口。
+#
+# 安全:
+#   * auth.token —— frpc(数据中心/客户端)接入 frps 的共享口令。部署脚本从
+#     v2/frp/secret.env 注入(gitignored),此处占位 __FRP_AUTH_TOKEN__。
+#   * STCP 的 secretKey 是【端到端】的(visitor↔数据中心),与 auth.token 独立;
+#     frps 不持有 secretKey,无法解出隧道内 git 流量。
+# =============================================================================
+
+# 注意 TOML 语义:所有顶层点号键(auth.* / webServer.* / log.* / transport.*)必须写在
+# 任何 [table] / [[array]] 之前,否则会被当成上一个 table 的子键(frps 报 unknown field)。
+# 故 allowPorts 用「行内数组」写在文件末尾,避免开 [[allowPorts]] 表头吞掉后续顶层键。
+
+bindPort = 7000
+
+auth.method = "token"
+auth.token = "__FRP_AUTH_TOKEN__"
+
+# 运维可观测(仅本地回环,经 ssh 隧道查看;不对公网开放)。
+webServer.addr = "127.0.0.1"
+webServer.port = 7500
+webServer.user = "admin"
+webServer.password = "__FRP_DASHBOARD_PWD__"
+
+log.to = "/var/log/frps.log"
+log.level = "info"
+log.maxDays = 7
+
+# 心跳:数据中心 frpc 断开后尽快回收,客户端 visitor 探活更准。
+transport.heartbeatTimeout = 90
+
+# 仅监听 0.0.0.0:7000(STCP 不额外开 remotePort,故 VPS 公网只暴露这一个撮合口)。
+# allowPorts 收紧到 {0,0}:禁止任何 frpc 申请开放 VPS remotePort(STCP 本就不需要),
+# 杜绝有人用同一 frps 在 VPS 上打开公网端口(纵深防御)。
+allowPorts = [{ start = 0, end = 0 }]
