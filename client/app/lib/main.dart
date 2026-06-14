@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import 'src/app_state.dart';
 import 'src/conflicts_page.dart';
+import 'src/connection_page.dart';
 import 'src/files_page.dart';
 import 'src/home_page.dart';
 import 'src/logs_page.dart';
@@ -48,7 +49,7 @@ class SharedSyncApp extends StatelessWidget {
   }
 }
 
-/// 主框架:NavigationRail(状态/文件/冲突/设置/日志)+ IndexedStack 保活页面。
+/// 主框架:NavigationRail(状态/文件/冲突/连接/设置/日志)+ IndexedStack 保活页面。
 class MainShell extends StatefulWidget {
   const MainShell({super.key, required this.state});
 
@@ -59,8 +60,9 @@ class MainShell extends StatefulWidget {
 }
 
 class _MainShellState extends State<MainShell> {
-  // 插入「文件」目的地(状态之后)后,设置目的地下移到索引 3。
-  static const int _settingsIndex = 3;
+  // 目的地顺序:状态(0)/文件(1)/冲突(2)/连接(3)/设置(4)/日志(5)。
+  // 在「冲突」之后插入「连接」目的地后,设置目的地下移到索引 4。
+  static const int _settingsIndex = 4;
 
   // null = 还没手动选过:已配置默认状态页,未配置落到设置向导。
   int? _index;
@@ -98,6 +100,10 @@ class _MainShellState extends State<MainShell> {
                     label: Text('冲突'),
                   ),
                   NavigationRailDestination(
+                    icon: Icon(Icons.hub),
+                    label: Text('连接'),
+                  ),
+                  NavigationRailDestination(
                     icon: Icon(Icons.settings),
                     label: Text('设置'),
                   ),
@@ -122,6 +128,7 @@ class _MainShellState extends State<MainShell> {
                         ? FilesPage(state: state)
                         : const _FilesPlaceholder(),
                     ConflictsPage(state: state),
+                    const ConnectionPage(),
                     SettingsPage(state: state),
                     LogsPage(state: state),
                   ],

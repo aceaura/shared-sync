@@ -35,6 +35,9 @@ v2/nebula/certs/
 v2/connd/connd
 v2/connd/bin/
 
+# v2 deploy 客户端配置包(含证书私钥/控制 ssh 私钥;绝不入库,用 enroll-client.sh 重建)
+v2/deploy/dist/
+
 # v2 frp 口令/密钥(绝不入库,用 secret.env.example 复制)
 v2/frp/secret.env
 # frp 二进制(运行期下载,不入库)

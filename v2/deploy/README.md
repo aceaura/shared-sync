@@ -52,3 +52,71 @@ VPS:AWS Amazon Linux 2023(us-east-1),公网 `54.198.93.78`,SG 放行 UDP 4242。
 docker rm -f nb-home nb-company                      # 本机节点容器
 ssh root@<VPS公网IP> 'systemctl disable --now nebula-lighthouse; docker rm -f ss-server'
 ```
+
+---
+
+# Phase4 — N 客户端接入工具 + 星型多客户端联调
+
+星型拓扑(DESIGN_v2 §1/§3/§7):1 VPS 中转中心 + 1 数据中心 + N 客户端,客户端互不通信,
+都只与数据中心同步。**新增一台客户端 = 跑一次 `enroll-client.sh`,不动其他节点。**
+
+## 角色化 IP 规划
+
+| 角色 | overlay IP | 说明 |
+|---|---|---|
+| lighthouse | `10.77.0.1` | VPS 公网中转(打洞协调 + UDP/TCP 中继) |
+| **datacenter** | `10.77.0.2` | 唯一同步数据中心(git 权威 `current` 分支) |
+| client-<名字> | `10.77.0.11+` | N 个客户端,签证时自动分配空闲 IP |
+
+## 1) 签发证书(`v2/nebula/gen-certs.sh`,幂等)
+
+```bash
+v2/nebula/gen-certs.sh                          # 批量基线:CA + lighthouse + datacenter(+旧名兼容)
+v2/nebula/gen-certs.sh sign datacenter          # 单签数据中心(10.77.0.2)
+v2/nebula/gen-certs.sh sign client-alice         # 自动分配 10.77.0.11+
+v2/nebula/gen-certs.sh sign client-bob 10.77.0.12 # 或显式指定 IP
+v2/nebula/gen-certs.sh list                      # 列出已签节点 + overlay IP
+```
+
+私钥只落 `v2/nebula/certs/`(已 gitignore)。
+
+## 2) 接入一台新客户端(`v2/deploy/enroll-client.sh`)
+
+```bash
+# 前置:v2/frp/secret.env(从 secret.env.example 复制,填 frps 端到端口令)
+v2/deploy/enroll-client.sh alice 54.198.93.78    # 第 3 参可选:数据中心 overlay,默认 10.77.0.2
+```
+
+产出 **可直接跑的客户端配置包** `v2/deploy/dist/alice/`:
+
+- `node.yml` — nebula 节点(连真 lighthouse,撑 T0/T1)
+- `frpc-visitor.toml` — frpc STCP visitor(本地 `127.0.0.1:18418` = connd `t2BackendAddr`)
+- `connd.yaml` — 三层阶梯 + 固定本地端点 `127.0.0.1:8418`(引擎 `server_url` 永远指它)
+- `ca.crt` / `client-alice.crt|.key` / `ctl_key*` / `sshd_hostkey*`
+- `README.md` / `MANIFEST.txt`
+
+把目录拷到目标机(挂到 `/etc/nebula` 与 `/etc/frp`),按包内 README 起三件套即可。
+`dist/` 含私钥,已 gitignore。
+
+## 3) 星型联调验证(`v2/deploy/star-e2e.sh`,真连真 VPS)
+
+```bash
+bash v2/deploy/star-e2e.sh                 # 1 数据中心 + 2 客户端(alice/bob),真连真 VPS
+FREEZE_UDP=1 bash v2/deploy/star-e2e.sh    # 额外验证「封一个客户端 UDP→只它降级 T2,另一个不受影响」
+KEEP=1 ... / bash star-e2e.sh --cleanup    # 保留容器排查 / 仅清理本机容器与网络
+```
+
+客户端配置由 `enroll-client.sh` 真实产出并直接挂载,验证接入工具产物可直接跑。
+
+## 已验证结果(2026-06-14,真机,`FREEZE_UDP=1` → PASS=14 FAIL=0)
+
+| 验证项 | 结果 |
+|---|---|
+| N→1 星型:两客户端各经【各自本地端点】git ls-remote 同一数据中心 | ✅ alice/bob 均列到 `67b13d3 HEAD / refs/heads/current` |
+| 稳态层 | ✅ alice/bob 均 `tier=T1`(overlay UDP relay)`upstream=10.77.0.2:80`;Docker 下 T0 直连不收敛 |
+| 共享中转:alice push 文件 → bob clone 看到 | ✅ bob 全新 clone 工作树含 `from-alice-<ts>.txt`;pull 读到 `hello from alice @ <ts>` |
+| 隧道独立:封 alice UDP → 只 alice 降级 | ✅ alice `tier=T2`(frp TCP,git 仍通);同刻 bob 仍 `tier=T1` git 仍通 |
+| alice UDP 恢复后升回 | ✅ 滞后窗口后 alice 升回 `tier=T1` |
+| VPS 生产组件未动 | ✅ nebula-lighthouse / frps / ss-server 全程 `active`,跑完清理本机容器/网络 |
+
+> 跑完自动清理本机容器(ss-dc / ss-alice / ss-bob)与网络 starnet;VPS 上的 systemd 服务只读复用、不停。
