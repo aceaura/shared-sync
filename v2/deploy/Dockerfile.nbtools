@@ -1,0 +1,8 @@
+# nb-tools — nebula 节点镜像(带 shell 与诊断工具)。
+# 官方 nebulaoss/nebula 是 distroless(无 shell/ping),不便排障与跑 shared-sync;
+# 以 alpine 为基,把官方二进制 COPY 进来,装上 ping/git/curl 等。
+FROM nebulaoss/nebula:latest AS nebula
+FROM alpine:3.20
+RUN apk add --no-cache bash iproute2 iputils curl git
+COPY --from=nebula /nebula /usr/local/bin/nebula
+ENTRYPOINT ["/usr/local/bin/nebula"]

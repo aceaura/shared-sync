@@ -88,3 +88,7 @@ firewall:
     - port: any
       proto: icmp
       host: any
+    # shared-sync git server(仅经 overlay 访问,不暴露公网)— Phase1 联调验证用。
+    - port: 8418
+      proto: tcp
+      host: any

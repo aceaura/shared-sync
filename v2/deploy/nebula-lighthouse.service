@@ -1,0 +1,11 @@
+[Unit]
+Description=Nebula lighthouse+relay (shared-sync v2)
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/nebula -config /etc/nebula/lighthouse.yml
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
